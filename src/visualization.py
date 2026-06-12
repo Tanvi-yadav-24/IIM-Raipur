@@ -336,19 +336,23 @@ def plot_factor_time_series(reg_input_df: pd.DataFrame) -> Path:
     df = reg_input_df.copy()
     df[COL_DATE] = pd.to_datetime(df[COL_DATE])
     factor_monthly = (
-        df.groupby(COL_DATE)[[COL_MF, COL_WML, "RF"]]
+        df.groupby(COL_DATE)[
+            [COL_MF, COL_SMB, COL_HML, COL_WML, "RF"]
+        ]
         .mean()
         .sort_index()
     )
     factor_monthly *= 100   # → percentage
 
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+    fig, axes = plt.subplots(5, 1, figsize=(14, 14), sharex=True)
     _apply_style(fig, list(axes))
 
     spec = [
-        (axes[0], COL_MF,   "Market Factor MF (Rm − Rf)",   _C_ACTIVE),
-        (axes[1], COL_WML,  "Momentum Factor WML",            _C_PASSIVE),
-        (axes[2], "RF",      "Risk-Free Rate RF (monthly)",    _C_ACCENT),
+        (axes[0], COL_MF,  "Market Factor MF", _C_ACTIVE),
+        (axes[1], COL_SMB, "Size Factor SMB", _C_ACCENT),
+        (axes[2], COL_HML, "Value Factor HML", _C_GOLD),
+        (axes[3], COL_WML, "Momentum Factor WML", _C_PASSIVE),
+        (axes[4], "RF",    "Risk-Free Rate RF", _C_SIG),
     ]
 
     for ax, col, title, color in spec:
@@ -376,7 +380,7 @@ def plot_factor_time_series(reg_input_df: pd.DataFrame) -> Path:
         _legend(ax, loc="upper right")
 
     axes[-1].set_xlabel("Date", fontsize=10)
-    fig.suptitle("Synthetic Factor Time Series (2013–2026)",
+    fig.suptitle("Carhart Factor Time Series (2013–2026)",
                  fontsize=13, fontweight="bold", color=_C_TEXT, y=1.01)
     fig.tight_layout()
     return _save(fig, "04_factor_time_series.png")
