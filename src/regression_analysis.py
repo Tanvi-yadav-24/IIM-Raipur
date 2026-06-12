@@ -497,7 +497,14 @@ def run_pooled_regression(
     logger.info("  §4 Running pooled panel regression …")
 
     df = merged_df.copy().dropna(
-        subset=[COL_EXCESS_RETURN, COL_MF, COL_WML, COL_ER]
+      subset=[
+          COL_EXCESS_RETURN,
+          COL_MF,
+          COL_SMB,
+          COL_HML,
+          COL_WML,
+          COL_ER,
+      ]
     )
 
     # Create Is_Active dummy (1 = Active, 0 = Passive)
@@ -505,6 +512,13 @@ def run_pooled_regression(
 
     # Active factors (exclude zero-variance)
     pool_factors = _select_active_factors(df)
+    logger.info(
+        f"Factor variances:\n"
+        f"MF={df[COL_MF].var():.6f}, "
+        f"SMB={df[COL_SMB].var():.6f}, "
+        f"HML={df[COL_HML].var():.6f}, "
+        f"WML={df[COL_WML].var():.6f}"
+    )
     logger.info(
         f"  Pooled active factors: {pool_factors}  |  "
         f"N = {len(df):,} observations"
