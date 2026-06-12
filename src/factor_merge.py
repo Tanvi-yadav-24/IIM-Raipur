@@ -589,7 +589,8 @@ def build_and_merge_factors(
     logger.info(f"  ║  Mean RF        : {ft[COL_RF].mean():>8.4%}/month                       ║")
     logger.info(f"  ║  Mean MF        : {ft[COL_MF].mean():>8.4%}/month                       ║")
     logger.info(f"  ║  Mean WML       : {ft[COL_WML].mean():>8.4%}/month                       ║")
-    logger.info(f"  ║  SMB / HML      : {'0.000 (constant — see design notes)':35s}  ║")
+    logger.info(f"  ║  Mean SMB       : {ft[COL_SMB].mean():>8.4%}/month                       ║")
+    logger.info(f"  ║  Mean HML       : {ft[COL_HML].mean():>8.4%}/month                       ║")
     logger.info(f"  ║  Merged rows    : {len(merged_df):>6,}                                  ║")
     logger.info(f"  ║  Merged funds   : {merged_df[COL_FUND_NAME].nunique():>6}                                  ║")
     logger.info(f"  ╚══════════════════════════════════╝")
@@ -609,8 +610,7 @@ def _parse_provided_factors(raw_factor_df: pd.DataFrame) -> pd.DataFrame:
     df = raw_factor_df.copy()
 
     # Date column
-    df["Date"] = pd.to_datetime(df["Date"].astype(str))
-
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y-%m")
     # Keep only analysis window
     df = df[
         (df["Date"] >= ANALYSIS_START)
