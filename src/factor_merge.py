@@ -168,87 +168,6 @@ _MOMENTUM_PCTILE_BOTTOM = 0.30   # bottom 30 % = losers
 # SECTION 1 — TIME-VARYING RF: RBI REPO RATE SCHEDULE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_rbi_rf_schedule(
-    start: str = ANALYSIS_START,
-    end:   str = ANALYSIS_END,
-) -> pd.DataFrame:
-    """
-    Construct a monthly risk-free rate table from the approximate RBI repo
-    rate history covering the analysis window.
-
-    The repo rate is converted from annual percentage to a monthly decimal:
-        RF_monthly = (annual_pct / 100) / 12
-
-    Parameters
-    ----------
-    start, end : str
-        Analysis window boundaries ("YYYY-MM-DD").
-
-    Returns
-    -------
-    pd.DataFrame
-        Columns: [Year_Month (Period[M]), RF (float, monthly decimal)]
-
-    Notes
-    -----
-    The schedule below approximates actual RBI policy rate history.
-    Replace with exact RBI data for a fully rigorous analysis.
-    The rates are applied from the listed start date until the next entry.
-    """
-    # (start_period_str, annual_rate_pct)
-    _RBI_SCHEDULE: list[tuple[str, float]] = [
-        ("2013-01", 7.75),
-        ("2014-01", 8.00),
-        ("2015-03", 7.50),
-        ("2015-09", 6.75),
-        ("2016-04", 6.50),
-        ("2017-08", 6.00),
-        ("2019-06", 5.75),
-        ("2019-08", 5.40),
-        ("2019-10", 5.15),
-        ("2020-03", 4.40),
-        ("2020-05", 4.00),
-        ("2022-05", 4.40),
-        ("2022-06", 4.90),
-        ("2022-08", 5.40),
-        ("2022-09", 5.90),
-        ("2022-12", 6.25),
-        ("2023-02", 6.50),
-        ("2025-02", 6.25),
-        ("2025-04", 6.00),
-    ]
-
-    # Build a full monthly Period index for the analysis window
-    start_period = pd.Period(start[:7], freq="M")
-    end_period   = pd.Period(end[:7],   freq="M")
-    all_months   = pd.period_range(start=start_period, end=end_period, freq="M")
-
-    # For each month, find the applicable rate (last schedule entry ≤ month)
-    schedule_periods = [
-        (pd.Period(p, freq="M"), rate) for p, rate in _RBI_SCHEDULE
-    ]
-
-    rf_values: list[float] = []
-    for month in all_months:
-        # Find the latest schedule entry that is <= current month
-        applicable_rate = SYNTHETIC_RF_MONTHLY * 12 * 100   # fallback: 6% p.a.
-        for sched_period, rate in schedule_periods:
-            if sched_period <= month:
-                applicable_rate = rate
-        rf_monthly = (applicable_rate / 100.0) / MONTHS_PER_YEAR
-        rf_values.append(rf_monthly)
-
-    rf_df = pd.DataFrame({
-        _YM_COL: all_months,
-        COL_RF:  rf_values,
-    })
-
-    logger.debug(
-        f"  RBI RF schedule built: {len(rf_df)} months  |  "
-        f"RF range: {min(rf_values):.4%} – {max(rf_values):.4%}/month"
-    )
-    return rf_df
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — ASSESS PROVIDED FACTOR FILE COVERAGE
@@ -315,354 +234,6 @@ def assess_factor_coverage(
     )
     return is_sufficient, coverage
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — MARKET FACTOR (MF) FROM PASSIVE FUND AVERAGE RETURN
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_market_factor(
-    master_df: pd.DataFrame,
-    rf_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Construct the monthly market excess return (MF = Rm − Rf) using the
-    equal-weighted cross-sectional mean return of all passive funds as the
-    market return proxy.
-
-    Rationale
-    ---------
-    All 33 passive funds track either the Nifty 50 or BSE Sensex index, which
-    collectively represent Indian large-cap equities — the market our active
-    funds are measured against.  Their equal-weighted average is therefore a
-    robust, widely-available market return proxy.
-
-    The market factor is defined as:
-        MF_t = mean_passive_return_t − RF_t
-
-    Parameters
-    ----------
-    master_df : pd.DataFrame
-        Full enriched master frame (all funds, all months).
-    rf_df : pd.DataFrame
-        RF schedule DataFrame with [Year_Month, RF] columns.
-
-    Returns
-    -------
-    pd.DataFrame
-        Monthly MF table: [Year_Month (Period[M]), MF_raw (Rm), MF (Rm−Rf)]
-
-    Notes
-    -----
-    * Equal weighting across passive funds avoids survivorship bias from any
-      single fund dominating.
-    * Months where fewer than 3 passive funds are available are flagged and
-      the market proxy may be noisy; these are still used but logged.
-    * We use ``COL_RETURN`` (simple returns), not log returns — consistent
-      with the Carhart OLS regression convention.
-    """
-    logger.info("  §3 Building market factor (MF) from passive fund avg return …")
-
-    passive_mask = master_df[COL_FUND_TYPE] == FUND_TYPE_PASSIVE
-    passive_df   = master_df[passive_mask].copy()
-
-    if passive_df.empty:
-        raise ValueError(
-            "build_market_factor: no passive fund rows found in master_df. "
-            "Cannot construct market factor."
-        )
-
-    # Ensure Year_Month is Period[M]
-    if passive_df[_YM_COL].dtype != "period[M]":
-        passive_df[_YM_COL] = passive_df[_YM_COL].apply(
-            lambda x: pd.Period(x, freq="M")
-        )
-
-    # Equal-weighted cross-sectional mean return per month
-    mf_raw = (
-        passive_df.groupby(_YM_COL)[COL_RETURN]
-        .agg(Rm=("mean"), N_funds=("count"))
-        .reset_index()
-    )
-    mf_raw.columns = [_YM_COL, _MF_RAW_COL, "N_passive_funds"]
-
-    # Warn on thin months
-    thin_months = mf_raw[mf_raw["N_passive_funds"] < 3]
-    if not thin_months.empty:
-        logger.warning(
-            f"  §3 Market proxy thin (< 3 passive funds) in "
-            f"{len(thin_months)} months: "
-            f"{thin_months[_YM_COL].tolist()}"
-        )
-
-    # Merge RF and compute MF = Rm − Rf
-    rf_df_copy = rf_df.copy()
-    if rf_df_copy[_YM_COL].dtype != "period[M]":
-        rf_df_copy[_YM_COL] = rf_df_copy[_YM_COL].apply(
-            lambda x: pd.Period(x, freq="M")
-        )
-
-    mf_table = mf_raw.merge(rf_df_copy, on=_YM_COL, how="left")
-    mf_table[COL_MF] = mf_table[_MF_RAW_COL] - mf_table[COL_RF]
-
-    logger.info(
-        f"    MF built:  {len(mf_table)} months  |  "
-        f"Mean Rm = {mf_table[_MF_RAW_COL].mean():.4%}  |  "
-        f"Mean MF = {mf_table[COL_MF].mean():.4%}  |  "
-        f"MF range: [{mf_table[COL_MF].min():.4%}, {mf_table[COL_MF].max():.4%}]"
-    )
-    return mf_table
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — MOMENTUM FACTOR (WML) FROM CROSS-FUND RETURN SPREAD
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_wml_factor(
-    master_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Construct a monthly momentum factor (WML) as a cross-fund return spread.
-
-    Formation period
-    ----------------
-    In month t, funds are ranked by their cumulative return over months
-    [t−12, t−2] (11 months, skipping t−1 to avoid the 1-month reversal
-    effect documented by Jegadeesh & Titman 1993).
-
-    Winner portfolio : top 30% of funds by formation-period return
-    Loser portfolio  : bottom 30% of funds by formation-period return
-
-    WML_t = mean(winner fund returns in month t)
-           − mean(loser fund returns in month t)
-
-    Parameters
-    ----------
-    master_df : pd.DataFrame
-        Full enriched master frame with Monthly_Return and Year_Month.
-
-    Returns
-    -------
-    pd.DataFrame
-        Monthly WML table: [Year_Month (Period[M]), WML (float)]
-
-    Notes
-    -----
-    * This is a fund-return-based momentum proxy.  It differs from the
-      stock-level Carhart WML factor but captures the same economic
-      intuition: do recent winner funds continue to outperform?
-    * Months where fewer than 10 funds are available are excluded from
-      winner/loser portfolio construction.
-    * Formation periods that overlap with the fund's own evaluation month
-      return (look-ahead bias) are avoided by design: the skip of t−1
-      ensures the formation window ends two months before evaluation.
-    """
-    logger.info("  §4 Building momentum factor (WML) from cross-fund return spread …")
-
-    df = master_df.copy()
-
-    # Ensure Period[M] type
-    if df[_YM_COL].dtype != "period[M]":
-        df[_YM_COL] = df[_YM_COL].apply(lambda x: pd.Period(x, freq="M"))
-
-    # Pivot to wide format: rows = months, columns = funds, values = return
-    df_clean = df.dropna(subset=[COL_RETURN]).copy()
-    wide = df_clean.pivot_table(
-        index=_YM_COL, columns=COL_FUND_NAME, values=COL_RETURN, aggfunc="mean"
-    )
-
-    all_months = sorted(wide.index)
-    wml_records: list[dict] = []
-
-    for t_idx, eval_month in enumerate(all_months):
-        # Formation window: t-12 to t-2 (skip t-1)
-        form_end_idx   = t_idx - _MOMENTUM_SKIP          # t-1
-        form_start_idx = t_idx - _MOMENTUM_LOOKBACK      # t-12
-
-        if form_start_idx < 0 or form_end_idx < 0:
-            continue   # not enough history yet
-
-        form_months = all_months[form_start_idx:form_end_idx]  # [t-12, t-2)
-        if len(form_months) < (_MOMENTUM_LOOKBACK - _MOMENTUM_SKIP - 1):
-            continue
-
-        # Cumulative formation-period return per fund
-        form_returns = wide.loc[form_months].sum(axis=0)   # sum ≈ approx compound
-        form_returns = form_returns.dropna()
-
-        n_funds = len(form_returns)
-        if n_funds < 10:
-            logger.debug(
-                f"    WML: {eval_month} — only {n_funds} funds in formation; skipped."
-            )
-            continue
-
-        # Rank funds into winner / loser portfolios
-        winner_threshold = form_returns.quantile(_MOMENTUM_PCTILE_TOP)
-        loser_threshold  = form_returns.quantile(_MOMENTUM_PCTILE_BOTTOM)
-
-        winner_funds = form_returns[form_returns >= winner_threshold].index.tolist()
-        loser_funds  = form_returns[form_returns <= loser_threshold].index.tolist()
-
-        # Evaluation month returns for winner and loser funds
-        if eval_month not in wide.index:
-            continue
-
-        eval_row = wide.loc[eval_month]
-
-        winner_ret = eval_row[winner_funds].dropna().mean()
-        loser_ret  = eval_row[loser_funds].dropna().mean()
-
-        if pd.isna(winner_ret) or pd.isna(loser_ret):
-            continue
-
-        wml_records.append({
-            _YM_COL: eval_month,
-            COL_WML: round(winner_ret - loser_ret, 8),
-            "_n_winners": len(winner_funds),
-            "_n_losers":  len(loser_funds),
-        })
-
-    wml_df = pd.DataFrame(wml_records)
-
-    if wml_df.empty:
-        logger.warning(
-            "  §4 WML factor is entirely empty — insufficient history. "
-            "Setting WML = 0.0 for all months."
-        )
-        return pd.DataFrame({_YM_COL: [], COL_WML: []})
-
-    logger.info(
-        f"    WML built: {len(wml_df)} months  |  "
-        f"Mean WML = {wml_df[COL_WML].mean():.4%}  |  "
-        f"Std WML  = {wml_df[COL_WML].std():.4%}  |  "
-        f"Range: [{wml_df[COL_WML].min():.4%}, {wml_df[COL_WML].max():.4%}]"
-    )
-    return wml_df[[_YM_COL, COL_WML]]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — ASSEMBLE FULL SYNTHETIC FACTOR TABLE
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_synthetic_factor_table(
-    master_df: pd.DataFrame,
-    start: str = ANALYSIS_START,
-    end:   str = ANALYSIS_END,
-) -> pd.DataFrame:
-    """
-    Assemble the complete monthly synthetic factor table for the analysis window.
-
-    Columns produced
-    ----------------
-    Year_Month   : pd.Period (monthly), merge key
-    Date         : last calendar day of each month (for display)
-    RF           : monthly risk-free rate (RBI repo rate ÷ 12, decimal)
-    MF           : market excess return (avg passive return − RF)
-    SMB          : 0.0  (all large-cap universe; size factor not applicable)
-    HML          : 0.0  (no book-to-market data available)
-    WML          : cross-fund momentum spread (top-30% minus bottom-30%)
-    Factor_Source: "synthetic"
-
-    Parameters
-    ----------
-    master_df : pd.DataFrame
-        Full enriched master frame (all funds).
-    start, end : str
-        Analysis window boundaries.
-
-    Returns
-    -------
-    pd.DataFrame
-        Factor table indexed by Year_Month.  One row per month.
-    """
-    logger.info("  §5 Assembling synthetic factor table …")
-
-    # ── §5a: RF schedule ─────────────────────────────────────────────────────
-    rf_df = _build_rbi_rf_schedule(start, end)
-
-    # ── §5b: Market factor ────────────────────────────────────────────────────
-    mf_df = build_market_factor(master_df, rf_df)
-
-    # ── §5c: WML momentum factor ──────────────────────────────────────────────
-    wml_df = build_wml_factor(master_df)
-
-    # ── §5d: Merge into one factor table ─────────────────────────────────────
-    factor_table = rf_df.copy()
-
-    # Ensure consistent Period[M] types before merging
-    for fdf in [mf_df, wml_df]:
-        if not fdf.empty and fdf[_YM_COL].dtype != "period[M]":
-            fdf[_YM_COL] = fdf[_YM_COL].apply(lambda x: pd.Period(x, freq="M"))
-
-    if factor_table[_YM_COL].dtype != "period[M]":
-        factor_table[_YM_COL] = factor_table[_YM_COL].apply(
-            lambda x: pd.Period(x, freq="M")
-        )
-
-    # Merge MF
-    factor_table = factor_table.merge(
-        mf_df[[_YM_COL, COL_MF]], on=_YM_COL, how="left"
-    )
-
-    # Merge WML
-    if not wml_df.empty:
-        factor_table = factor_table.merge(
-            wml_df, on=_YM_COL, how="left"
-        )
-    else:
-        factor_table[COL_WML] = 0.0
-
-    # ── §5e: Zero-fill SMB and HML ────────────────────────────────────────────
-    factor_table[COL_SMB] = 0.0
-    factor_table[COL_HML] = 0.0
-
-    # ── §5f: Fill any remaining NaN WML with 0 (early months without history)
-    n_wml_nan = factor_table[COL_WML].isna().sum()
-    if n_wml_nan > 0:
-        factor_table[COL_WML] = factor_table[COL_WML].fillna(0.0)
-        logger.info(
-            f"    WML: {n_wml_nan} months without enough history → set to 0.0."
-        )
-
-    # ── §5g: Add Date column (last day of each month for display) ─────────────
-    factor_table["Date"] = factor_table[_YM_COL].dt.to_timestamp("M")
-
-    # ── §5h: Add source tag ───────────────────────────────────────────────────
-    factor_table[_FACTOR_SOURCE] = "synthetic"
-
-    # ── §5i: Reorder columns ─────────────────────────────────────────────────
-    col_order = [_YM_COL, "Date", COL_RF, COL_MF, COL_SMB, COL_HML, COL_WML, _FACTOR_SOURCE]
-    factor_table = factor_table[col_order].sort_values(_YM_COL).reset_index(drop=True)
-
-    # ── §5j: Validate ─────────────────────────────────────────────────────────
-    n_months_expected = (
-        (pd.Period(end[:7], freq="M") - pd.Period(start[:7], freq="M")).n + 1
-    )
-    n_months_actual = len(factor_table)
-    if n_months_actual < n_months_expected * 0.95:
-        logger.warning(
-            f"  §5 Factor table has only {n_months_actual}/{n_months_expected} "
-            f"expected months."
-        )
-
-    # Report
-    logger.info(
-        f"  Synthetic factor table:\n"
-        f"    Months    : {len(factor_table)}\n"
-        f"    Period    : {factor_table[_YM_COL].min()} → {factor_table[_YM_COL].max()}\n"
-        f"    RF range  : {factor_table[COL_RF].min():.4%} – {factor_table[COL_RF].max():.4%}/month\n"
-        f"    MF mean   : {factor_table[COL_MF].mean():.4%}  std={factor_table[COL_MF].std():.4%}\n"
-        f"    WML mean  : {factor_table[COL_WML].mean():.4%}  std={factor_table[COL_WML].std():.4%}\n"
-        f"    SMB       : 0.0 (constant — large-cap universe)\n"
-        f"    HML       : 0.0 (constant — no B/M data)"
-    )
-
-    return factor_table
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — MERGE FACTOR TABLE INTO REGRESSION DATAFRAME
-# ══════════════════════════════════════════════════════════════════════════════
 
 def merge_factors_into_frame(
     reg_df: pd.DataFrame,
@@ -797,7 +368,7 @@ def update_excess_returns(df: pd.DataFrame) -> pd.DataFrame:
     if _FACTOR_SOURCE in df.columns:
         df[COL_RF_SOURCE] = df[_FACTOR_SOURCE]
     else:
-        df[COL_RF_SOURCE] = "synthetic"
+        df[COL_RF_SOURCE] = "provided"
 
     # Diagnostics
     rf_mean  = df[COL_RF].mean()
@@ -976,17 +547,10 @@ def build_and_merge_factors(
     logger.info("  FACTOR MERGE PHASE — build_and_merge_factors")
     logger.info("=" * 68)
 
-    # ── Step 1: Coverage assessment ───────────────────────────────────────────
-    logger.info("\n── Step 1: Assess provided factor file coverage ──")
-    is_sufficient, coverage = assess_factor_coverage(raw_factor_df)
-
     # ── Step 2: Build or parse factor table ───────────────────────────────────
-    if is_sufficient:
-        logger.info("\n── Step 2: Using provided factor data ──")
-        factor_table = _parse_provided_factors(raw_factor_df)
-    else:
-        logger.info("\n── Step 2: Building synthetic factor table ──")
-        factor_table = build_synthetic_factor_table(master_df)
+    logger.info("Using provided factor dataset (1993–2025).")
+
+    factor_table = _parse_provided_factors(raw_factor_df)
 
     # ── Step 3: Merge factors into regression frame ───────────────────────────
     logger.info("\n── Step 3: Merge factor table into regression frame ──")
@@ -1006,7 +570,7 @@ def build_and_merge_factors(
         ft_export = factor_table.copy()
         if _YM_COL in ft_export.columns:
             ft_export[_YM_COL] = ft_export[_YM_COL].astype(str)
-        save_dataframe(ft_export, FACTOR_SYNTHETIC_FILE, description="Synthetic factor table")
+        save_dataframe(ft_export, FACTOR_SYNTHETIC_FILE, description="Provided factor table")
 
         from src.config import REGRESSION_RESULTS_DIR
         from src.utils import ensure_dir
@@ -1020,7 +584,7 @@ def build_and_merge_factors(
     # ── Final report ──────────────────────────────────────────────────────────
     ft = factor_table
     logger.info(f"\n  ╔══════ FACTOR MERGE SUMMARY ══════╗")
-    logger.info(f"  ║  Factor source  : {'Synthetic (RBI RF + passive avg MF)':35s}  ║")
+    logger.info(f"  ║  Factor source  : {'Provided Four-Factor Dataset':35s}  ║")
     logger.info(f"  ║  Factor months  : {len(ft):>6}                                    ║")
     logger.info(f"  ║  Mean RF        : {ft[COL_RF].mean():>8.4%}/month                       ║")
     logger.info(f"  ║  Mean MF        : {ft[COL_MF].mean():>8.4%}/month                       ║")
@@ -1037,52 +601,66 @@ def build_and_merge_factors(
 
 def _parse_provided_factors(raw_factor_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Parse the provided factor CSV into the standard factor table format.
-    Only called when ``assess_factor_coverage`` returns True.
-
-    This path is currently unreachable with the supplied factor_data.csv
-    (0% coverage), but is implemented for future use when a complete Indian
-    factor dataset is obtained.
-
-    Parameters
-    ----------
-    raw_factor_df : pd.DataFrame
-        Raw factor DataFrame from ``load_factor_data``.
-
-    Returns
-    -------
-    pd.DataFrame
-        Factor table in the same format as ``build_synthetic_factor_table``.
+    Parse real factor data.
     """
-    logger.info("  Parsing provided factor file …")
+
+    logger.info("Parsing provided factor dataset...")
+
     df = raw_factor_df.copy()
 
-    # Parse Date (YYYY-MM) to Period[M]
-    df[_YM_COL] = pd.PeriodIndex(df[COL_FACTOR_DATE_RAW], freq="M")
+    # Date column
+    df["Date"] = pd.to_datetime(df["Date"].astype(str))
 
-    # Rename raw columns to pipeline standard
+    # Keep only analysis window
+    df = df[
+        (df["Date"] >= ANALYSIS_START)
+        &
+        (df["Date"] <= ANALYSIS_END)
+    ].copy()
+
+    # Create merge key
+    df[_YM_COL] = df["Date"].dt.to_period("M")
+
+    # Rename columns
     rename_map = {
-        COL_MF_RAW:  COL_MF,
+        COL_MF_RAW: COL_MF,
         COL_SMB_RAW: COL_SMB,
         COL_HML_RAW: COL_HML,
         COL_WML_RAW: COL_WML,
-        COL_RF_RAW:  COL_RF,
+        COL_RF_RAW: COL_RF,
     }
+
     df = df.rename(columns=rename_map)
 
+    # Convert percent → decimal
+    factor_cols = [
+        COL_MF,
+        COL_SMB,
+        COL_HML,
+        COL_WML,
+        COL_RF,
+    ]
+    for col in factor_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = df[col] / 100.0
+
+    df[_FACTOR_SOURCE] = "provided"
+
+    return df[
+        [
+            _YM_COL,
+            "Date",
+            COL_RF,
+            COL_MF,
+            COL_SMB,
+            COL_HML,
+            COL_WML,
+            _FACTOR_SOURCE,
+        ]
+    ]
     # Provided RF is in decimal percent → convert to decimal
     # (factor files typically store RF as annualised % or already monthly %)
     # Divide by 100 if values look like percentages (> 0.1 is a hint)
-    if df[COL_RF].mean() > 0.1:
-        df[COL_RF] = df[COL_RF] / 100.0
-        logger.info("    RF values > 0.1 detected — dividing by 100 (% → decimal).")
-
-    df["Date"] = df[_YM_COL].dt.to_timestamp("M")
-    df[_FACTOR_SOURCE] = "provided"
-
-    col_order = [_YM_COL, "Date", COL_RF, COL_MF, COL_SMB, COL_HML, COL_WML, _FACTOR_SOURCE]
-    return df[[c for c in col_order if c in df.columns]]
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 10 — SELF-TEST (python src/factor_merge.py)
@@ -1131,11 +709,6 @@ if __name__ == "__main__":
             f"  ✅ Factor table: {len(factor_table)} months  ×  "
             f"{len(factor_table.columns)} cols."
         )
-
-        # A2: SMB and HML are zero throughout (by design)
-        assert (factor_table[COL_SMB] == 0.0).all(), "SMB ≠ 0"
-        assert (factor_table[COL_HML] == 0.0).all(), "HML ≠ 0"
-        _log.info("  ✅ SMB = HML = 0.0 throughout (large-cap universe).")
 
         # A3: MF is non-trivial (mean should be non-zero, std > 0)
         mf_mean = factor_table[COL_MF].mean()
