@@ -604,7 +604,7 @@ def test_active_vs_passive(
             f"  ║  {label:<35}  {s:>8.4f}  {p:>8.4f}  {sig:>3}  ║"
         )
     logger.info(
-        f"  ║  {'Cohen\'s d (returns)':<35}  {cohens_d:>8.4f}  {'':>8}  {'':>3}  ║"
+        f"  ║  {'Cohen d (returns)':<35}  {cohens_d:>8.4f}  {'':>8}  {'':>3}  ║"
     )
     logger.info(
         f"  ╚═══════════════════════════════════════════════════╝"
