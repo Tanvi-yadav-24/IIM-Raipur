@@ -193,7 +193,7 @@ FUND_TYPE_PASSIVE: str  = "Passive"
 #            (~160 months).  Passive funds with earlier history are retained for
 #            standalone fund-level analysis but flagged in the master dataset.
 ANALYSIS_START: str     = "2013-01-01"   # inclusive lower bound (YYYY-MM-DD)
-ANALYSIS_END: str       = "2026-04-30"   # inclusive upper bound (YYYY-MM-DD)
+ANALYSIS_END: str       = "2025-12-30"   # inclusive upper bound (YYYY-MM-DD)
 
 # Minimum number of monthly observations required for a fund to be included in
 # the Carhart regression.  Funds with fewer observations are logged and skipped.
