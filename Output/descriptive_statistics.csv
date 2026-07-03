@@ -1,0 +1,5 @@
+,Monthly_Alpha (%),Monthly_Alpha (%),Monthly_Alpha (%),Annualized_Alpha (%),Annualized_Alpha (%),Beta_Market,Beta_Market,R2,R2,Expense_Ratio,Expense_Ratio,Sharpe_Ratio,Sharpe_Ratio,CAGR (%),CAGR (%),Num_Observations,Num_Observations,Num_Observations
+,mean,median,std,mean,median,mean,median,mean,median,mean,median,mean,median,mean,median,mean,min,max
+Fund_Type,,,,,,,,,,,,,,,,,,
+Active,0.1793,0.1255,0.2399,2.2105,1.5162,0.9026,0.9099,0.8644,0.864,1.2058,1.03,0.5945,0.5865,14.4875,14.5931,122.5758,16,155
+Passive,0.0488,0.1026,0.2068,0.6145,1.2381,0.9176,0.9486,0.7523,0.8772,0.1297,0.11,0.403,0.4703,9.1135,12.8401,128.2121,48,236

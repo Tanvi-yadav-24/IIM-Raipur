@@ -1,0 +1,19 @@
+Metric,Value
+Active Mean Expense Ratio (%),1.2058
+Active Median Expense Ratio (%),1.03
+Passive Mean Expense Ratio (%),0.1297
+Passive Median Expense Ratio (%),0.11
+ER Ratio (Active / Passive),9.3
+Correlation: ER vs Monthly Alpha (r),0.1665
+Correlation: ER vs Monthly Alpha (p-value),0.1814
+Correlation: ER vs Monthly Alpha (Significant at 5%?),No
+Correlation: ER vs Sharpe Ratio (r),0.1802
+Correlation: ER vs Sharpe Ratio (p-value),0.1477
+Correlation: ER vs Sharpe Ratio (Significant at 5%?),No
+Correlation: ER vs CAGR (r),0.2776
+Correlation: ER vs CAGR (p-value),0.024
+Correlation: ER vs CAGR (Significant at 5%?),Yes
+Within-Active: ER vs Alpha (r),-0.1886
+Within-Active: ER vs Alpha (p-value),0.2933
+Within-Passive: ER vs Alpha (r),0.265
+Within-Passive: ER vs Alpha (p-value),0.1362
